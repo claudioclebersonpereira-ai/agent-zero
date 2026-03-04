@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -13,6 +14,37 @@ from .model import DiscoveredDoc, ParsedDoc
 from .sources import LexMLSource, STFSumulasSource
 from .storage import write_markdown
 from .utils import stable_content_hash
+
+
+def _read_content_sha256_from_front_matter(path: Path) -> str | None:
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            head = f.read(16_384)
+    except Exception:
+        return None
+
+    if not head.startswith("---"):
+        return None
+
+    lines = head.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return None
+
+    # Only scan the front matter section.
+    for line in lines[1:200]:
+        if line.strip() == "---":
+            break
+        if not line.startswith("content_sha256:"):
+            continue
+        rest = line.split(":", 1)[1].strip()
+        if not rest:
+            return None
+        try:
+            value = ast.literal_eval(rest)
+            return value if isinstance(value, str) else None
+        except Exception:
+            return rest.strip().strip("'\"")
+    return None
 
 
 @dataclass(frozen=True)
@@ -124,7 +156,20 @@ def ingest_public_corpus(cfg: IngestConfig) -> IngestSummary:
             content_sha = stable_content_hash(content_payload)
             record_id = f"{parsed.doc_id}:sha256-{content_sha[:12]}"
 
-            if existing and existing.content_sha256 == content_sha:
+            needs_write = not (existing and existing.content_sha256 == content_sha)
+
+            # Resume behavior: if the manifest says "unchanged" but the on-disk
+            # file is missing/corrupted (hash mismatch), rewrite it.
+            if (not needs_write) and (not cfg.dry_run) and cfg.resume and existing:
+                file_path = corpus_dir / existing.path
+                if not file_path.exists():
+                    needs_write = True
+                else:
+                    file_hash = _read_content_sha256_from_front_matter(file_path)
+                    if file_hash != existing.content_sha256:
+                        needs_write = True
+
+            if not needs_write:
                 summary.skipped_unchanged += 1
                 if summary.sources is not None:
                     summary.sources[src_name]["skipped_unchanged"] += 1

@@ -61,7 +61,28 @@ class _FixtureFetcher:
             return FetchResult(url=url, status=200, text=self._read("stf_vinculantes_listing.html"))
         if "sumula.asp?sumula=123" in url:
             return FetchResult(url=url, status=200, text=self._read("stf_sumula_detail.html"))
+        if "sumariosumulas.asp" in url:
+            return FetchResult(url=url, status=200, text=self._read("stf_sumula_detail.html"))
 
+        return FetchResult(url=url, status=404, text=None, error="fixture-miss")
+
+    def post_form(self, url: str, form: dict[str, str], *, headers: dict[str, str] | None = None) -> FetchResult:
+        # STF search API fixture: return a single vinculante entry so we can
+        # test the per-doc_type fallback path deterministically.
+        if url.endswith("/jurisprudencia/aplicacaosumulapesquisa.asp"):
+            base = str(form.get("base") or "")
+            numero = str(form.get("numero") or "")
+            if base == "26" and numero == "1":
+                payload = [
+                    {
+                        "num": "Súmula Vinculante 1",
+                        "link": "1185",
+                        "termo": "",
+                        "comentario": "Fixture",
+                    }
+                ]
+                return FetchResult(url=url, status=200, text=json.dumps(payload, ensure_ascii=False))
+            return FetchResult(url=url, status=200, text="[]")
         return FetchResult(url=url, status=404, text=None, error="fixture-miss")
 
 
